@@ -1,0 +1,92 @@
+===============================================================================
+GRAMMAR SPECIFICATION: Simple Calculator Language
+Language Specification and Grammar
+===============================================================================
+
+1. TERMINALS (TOKENS)
+-------------------------------------------------------------------------------
+print   : "print" keyword
+id      : variable name (e.g. x, a, total)
+num     : integer literal (e.g. 0, 5, 42)
+=       : assignment operator
++       : addition operator
+-       : subtraction operator
+*       : multiplication operator
+/       : division operator
+%       : modulo operator
+(       : left parenthesis
+)       : right parenthesis
+;       : semicolon (statement terminator)
+$       : end of input (EOF)
+
+Ignored by Lexer: spaces, tabs, newlines, and '#' comments.
+
+
+2. GRAMMAR (WITH OPERATOR PRECEDENCE)
+-------------------------------------------------------------------------------
+Program -> StmtList $
+
+StmtList -> Stmt StmtList
+          | ε
+
+Stmt -> id = E ;
+      | print ( E ) ;
+
+E -> E + T
+   | E - T
+   | T
+
+T -> T * F
+   | T / F
+   | T % F
+   | F
+
+F -> ( E )
+   | id
+   | num
+
+
+3. LL(1) PARSER-READY GRAMMAR (LEFT-RECURSION ELIMINATED)
+-------------------------------------------------------------------------------
+Using the standard rule:
+A -> A α | β  transforms to  A -> β A'  and  A' -> α A' | ε
+
+Program  -> StmtList $
+
+StmtList -> Stmt StmtList
+          | ε
+
+Stmt     -> id = E ;
+          | print ( E ) ;
+
+E        -> T E'
+
+E'       -> + T E'
+          | - T E'
+          | ε
+
+T        -> F T'
+
+T'       -> * F T'
+          | / F T'
+          | % F T'
+          | ε
+
+F        -> ( E )
+          | id
+          | num
+
+
+4. FIRST AND FOLLOW SETS
+-------------------------------------------------------------------------------
+Non-Terminal   FIRST Set              FOLLOW Set
+-------------------------------------------------------------------------------
+Program        { id, print, $ }       { $ }
+StmtList       { id, print, ε }       { $ }
+Stmt           { id, print }          { id, print, $ }
+E              { (, id, num }         { ;, ) }
+E'             { +, -, ε }            { ;, ) }
+T              { (, id, num }         { +, -, ;, ) }
+T'             { *, /, %, ε }         { +, -, ;, ) }
+F              { (, id, num }         { *, /, %, +, -, ;, ) }
+===============================================================================
