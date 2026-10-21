@@ -84,3 +84,7 @@ class SemanticAnalyzer:
     def _visit_Variable(self, node):
         if not self.symbols.is_defined(node.name):
             self._error(f"variable '{node.name}' used before assignment", node)
+def analyze(ast):
+    """Agreed team interface: returns a list of semantic error messages."""
+    _, errors = SemanticAnalyzer().analyze(ast)
+    return errors

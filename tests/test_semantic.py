@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from semantic import SemanticAnalyzer
+from semantic import SemanticAnalyzer, analyze as agreed_analyze
 
 
 # Stand-in AST nodes (replace with Member 4's ast_nodes later)
@@ -101,6 +101,17 @@ class TestSemanticAnalyzer(unittest.TestCase):
         symbols, errors = analyze()
         self.assertEqual(errors, [])
         self.assertEqual(symbols.names(), [])
+
+
+class TestAgreedInterface(unittest.TestCase):
+    def test_returns_list_of_errors(self):
+        errors = agreed_analyze(Program([Print(Variable("a", 1), 1)]))
+        self.assertIsInstance(errors, list)
+        self.assertEqual(len(errors), 1)
+
+    def test_valid_program_returns_empty_list(self):
+        errors = agreed_analyze(Program([Assign("x", Number(1), 1), Print(Variable("x", 2), 2)]))
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":
