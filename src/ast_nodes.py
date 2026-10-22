@@ -1,14 +1,29 @@
 
-"""Abstract Syntax Tree node definitions."""
+"""Abstract Syntax Tree node definitions for the Simple Calculator Language."""
 
 
-class Program:
+class ASTNode:
+    """Base class for all AST nodes."""
+    pass
+
+
+class Expression(ASTNode):
+    """Base class for expression nodes."""
+    pass
+
+
+class Statement(ASTNode):
+    """Base class for statement nodes."""
+    pass
+
+
+class Program(ASTNode):
     def __init__(self, statements):
         self.statements = statements
         self.body = statements
 
 
-class Assignment:
+class Assignment(Statement):
     def __init__(self, target, expression):
         self.target = target
         self.name = target
@@ -17,14 +32,14 @@ class Assignment:
         self.expr = expression
 
 
-class PrintStatement:
+class PrintStatement(Statement):
     def __init__(self, expression):
         self.expression = expression
         self.value = expression
         self.expr = expression
 
 
-class BinaryOp:
+class BinaryOp(Expression):
     def __init__(self, left, operator, right):
         self.left = left
         self.operator = operator
@@ -32,20 +47,20 @@ class BinaryOp:
         self.right = right
 
 
-class Variable:
+class Variable(Expression):
     def __init__(self, name):
         self.name = name
         self.identifier = name
         self.value = name
 
 
-class Number:
+class Number(Expression):
     def __init__(self, value):
         self.value = int(value)
         self.number = self.value
 
 
-# Familiar aliases for code that uses alternate AST naming conventions.
+# Familiar aliases for alternate AST naming conventions.
 Assign = Assignment
 Print = PrintStatement
 Identifier = Variable
