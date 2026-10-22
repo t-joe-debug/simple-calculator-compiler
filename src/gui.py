@@ -1,3 +1,4 @@
+
 """Tkinter GUI for the Simple Calculator Language compiler."""
 
 import importlib
@@ -108,10 +109,14 @@ class CompilerGUI:
         self.tabs = ttk.Notebook(results)
         self.tabs.grid(row=0, column=0, sticky="nsew")
 
+        # Original tabs and order are preserved.
         self.tokens_output = self._add_output_tab("Tokens")
         self.ast_output = self._add_output_tab("AST")
         self.semantic_output = self._add_output_tab("Semantic Analysis")
         self.errors_output = self._add_output_tab("Errors")
+
+        # New Output tab.
+        self.program_output = self._add_output_tab("Output")
 
         status_bar = ttk.Label(
             self.root,
@@ -166,6 +171,7 @@ class CompilerGUI:
             self.ast_output,
             self.semantic_output,
             self.errors_output,
+            self.program_output,
         ):
             self._set_text(widget, "")
 
@@ -180,8 +186,7 @@ class CompilerGUI:
             function = getattr(lexer_module, function_name, None)
 
             if callable(function):
-                result = function(source)
-                return "\n".join(map(str, result))
+                return "\n".join(map(str, function(source)))
 
         lexer_class = getattr(lexer_module, "Lexer", None)
 
@@ -194,14 +199,11 @@ class CompilerGUI:
                 if callable(method):
                     return "\n".join(map(str, method()))
 
-        return (
-            "Could not identify the project's lexer API.\n"
-            "Check the tokenization function in src/lexer.py."
-        )
+        return "Could not identify the lexer API."
 
     @staticmethod
     def _format_ast(tree):
-        """Return a readable AST using the project's AST printer."""
+        """Format the AST using the project's AST printer."""
         try:
             printer_module = importlib.import_module("src.ast_printer")
 
@@ -214,22 +216,107 @@ class CompilerGUI:
 
                 if callable(function):
                     result = function(tree)
-
                     if result is not None:
                         return str(result)
 
-        except (ImportError, AttributeError) as exc:
-            return (
-                "AST created successfully, but the AST printer could "
-                f"not be loaded: {exc}\n\n{tree!r}"
-            )
+        except ImportError:
+            pass
 
         return repr(tree)
+
+    @staticmethod
+    def _execute_ast(tree):
+        """Evaluate the calculator AST and collect print() output."""
+        variables = {}
+        printed_values = []
+
+        def evaluate(node):
+            kind = type(node).__name__
+
+            if kind == "Program":
+                for statement in node.statements:
+                    evaluate(statement)
+                return None
+
+            if kind == "Assignment":
+                variables[node.target] = evaluate(node.expression)
+                return None
+
+            if kind == "PrintStatement":
+                printed_values.append(str(evaluate(node.expression)))
+                return None
+
+            if kind == "Number":
+                return node.value
+
+            if kind == "Variable":
+                if node.name not in variables:
+                    raise ValueError(
+                        f"Undefined variable: {node.name}"
+                    )
+                return variables[node.name]
+
+            if kind == "BinaryOp":
+                left = evaluate(node.left)
+                right = evaluate(node.right)
+                operator = node.operator
+
+                if operator in ("/", "%") and right == 0:
+                    raise ValueError(
+                        "Division or modulo by zero."
+                    )
+
+                operations = {
+                    "+": lambda: left + right,
+                    "-": lambda: left - right,
+                    "*": lambda: left * right,
+                    "/": lambda: left / right,
+                    "%": lambda: left % right,
+                }
+
+                if operator not in operations:
+                    raise ValueError(
+                        f"Unsupported operator: {operator}"
+                    )
+
+                return operations[operator]()
+
+            # Support unary operations if the AST defines them.
+            if kind == "UnaryOp":
+                operator = node.operator
+                operand = evaluate(node.operand)
+
+                if operator == "-":
+                    return -operand
+                if operator == "+":
+                    return +operand
+
+                raise ValueError(
+                    f"Unsupported unary operator: {operator}"
+                )
+
+            raise ValueError(
+                f"Unsupported AST node: {kind}"
+            )
+
+        evaluate(tree)
+        return "\n".join(printed_values)
 
     def compile_source(self):
         source = self.editor.get("1.0", "end-1c").strip()
 
+        # Clear old results to prevent stale output.
+        for widget in (
+            self.tokens_output,
+            self.ast_output,
+            self.semantic_output,
+            self.errors_output,
+            self.program_output,
+        ):
+            self._set_text(widget, "")
+
         if not source:
+            self.status.set("Please enter a program.")
             messagebox.showwarning(
                 "Empty Source",
                 "Please enter a program first.",
@@ -242,6 +329,7 @@ class CompilerGUI:
             token_text = self._get_tokens(source)
         except Exception as exc:
             token_text = f"Lexer error: {exc}"
+            errors.append(token_text)
 
         try:
             tree = parse_source(source)
@@ -260,7 +348,7 @@ class CompilerGUI:
             )
             self._set_text(self.errors_output, "\n".join(errors))
 
-            self.status.set("Compilation failed: syntax/parser error")
+            self.status.set("Compilation failed: parser error")
             self.tabs.select(3)
             return
 
@@ -268,8 +356,13 @@ class CompilerGUI:
             semantic_result = analyze(tree)
 
             if semantic_result:
-                semantic_text = "\n".join(map(str, semantic_result))
-                errors.extend(map(str, semantic_result))
+                if isinstance(semantic_result, (list, tuple)):
+                    diagnostics = list(map(str, semantic_result))
+                else:
+                    diagnostics = [str(semantic_result)]
+
+                semantic_text = "\n".join(diagnostics)
+                errors.extend(diagnostics)
             else:
                 semantic_text = "No semantic errors found."
 
@@ -280,17 +373,34 @@ class CompilerGUI:
         self._set_text(self.tokens_output, token_text)
         self._set_text(self.ast_output, ast_text)
         self._set_text(self.semantic_output, semantic_text)
-        self._set_text(
-            self.errors_output,
-            "\n".join(errors) if errors else "No errors found.",
-        )
 
         if errors:
+            self._set_text(self.program_output, "")
+            self._set_text(self.errors_output, "\n".join(errors))
             self.status.set("Compilation finished with errors")
             self.tabs.select(3)
-        else:
+            return
+
+        # Execute only when parsing and semantic analysis succeed.
+        try:
+            result = self._execute_ast(tree)
+
+            self._set_text(
+                self.program_output,
+                result if result else "(No print output)",
+            )
+            self._set_text(self.errors_output, "No errors found.")
             self.status.set("Compilation successful")
-            self.tabs.select(2)
+            self.tabs.select(4)
+
+        except Exception as exc:
+            self._set_text(self.program_output, "")
+            self._set_text(
+                self.errors_output,
+                f"Execution error: {exc}",
+            )
+            self.status.set("Execution failed")
+            self.tabs.select(3)
 
 
 def main():
