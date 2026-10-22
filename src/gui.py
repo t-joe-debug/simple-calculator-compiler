@@ -109,13 +109,16 @@ class CompilerGUI:
         self.tabs = ttk.Notebook(results)
         self.tabs.grid(row=0, column=0, sticky="nsew")
 
-        # Original tabs and order are preserved.
+        # Keep the existing result tabs and their order.
         self.tokens_output = self._add_output_tab("Tokens")
-        self.ast_output = self._add_output_tab("AST")
-        self.semantic_output = self._add_output_tab("Semantic Analysis")
-        self.errors_output = self._add_output_tab("Errors")
 
-        # New Output tab.
+        # The AST tab uses a graphical canvas instead of plain text.
+        self.ast_canvas = self._add_ast_tab("AST")
+
+        self.semantic_output = self._add_output_tab(
+            "Semantic Analysis"
+        )
+        self.errors_output = self._add_output_tab("Errors")
         self.program_output = self._add_output_tab("Output")
 
         status_bar = ttk.Label(
@@ -127,6 +130,7 @@ class CompilerGUI:
         status_bar.grid(row=3, column=0, sticky="ew")
 
     def _add_output_tab(self, title):
+        """Create a regular text output tab."""
         frame = ttk.Frame(self.tabs, padding=5)
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
@@ -151,12 +155,200 @@ class CompilerGUI:
         self.tabs.add(frame, text=title)
         return output
 
+    def _add_ast_tab(self, title):
+        """Create a scrollable canvas for displaying the AST."""
+        frame = ttk.Frame(self.tabs, padding=5)
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(
+            frame,
+            background="white",
+            highlightthickness=0,
+        )
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        y_scroll = ttk.Scrollbar(
+            frame,
+            orient="vertical",
+            command=canvas.yview,
+        )
+        y_scroll.grid(row=0, column=1, sticky="ns")
+
+        x_scroll = ttk.Scrollbar(
+            frame,
+            orient="horizontal",
+            command=canvas.xview,
+        )
+        x_scroll.grid(row=1, column=0, sticky="ew")
+
+        canvas.configure(
+            yscrollcommand=y_scroll.set,
+            xscrollcommand=x_scroll.set,
+        )
+
+        self.tabs.add(frame, text=title)
+        return canvas
+
     @staticmethod
     def _set_text(widget, content):
+        """Replace the content of a read-only result widget."""
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", str(content))
         widget.configure(state="disabled")
+
+    def _draw_ast(self, tree, message=None):
+        """Draw the AST as a top-down tree with connecting branches."""
+        canvas = self.ast_canvas
+        canvas.delete("all")
+
+        if tree is None:
+            canvas.create_text(
+                25,
+                25,
+                text=message or "AST will appear here after parsing.",
+                anchor="nw",
+                font=("Segoe UI", 11),
+                fill="#555555",
+            )
+            canvas.configure(scrollregion=(0, 0, 900, 500))
+            return
+
+        def describe(node):
+            """Return a display label and the node's child nodes."""
+            kind = type(node).__name__
+
+            if kind == "Program":
+                return "Program", list(node.statements)
+
+            if kind == "Assignment":
+                return f"Assignment: {node.target}", [node.expression]
+
+            if kind == "PrintStatement":
+                return "Print", [node.expression]
+
+            if kind == "BinaryOp":
+                return str(node.operator), [node.left, node.right]
+
+            if kind == "UnaryOp":
+                return str(node.operator), [node.operand]
+
+            if kind == "Variable":
+                return f"Variable: {node.name}", []
+
+            if kind == "Number":
+                return f"Number: {node.value}", []
+
+            # Fallback for other AST node types.
+            children = []
+
+            for attribute in ("statements", "body"):
+                value = getattr(node, attribute, None)
+                if isinstance(value, (list, tuple)):
+                    children = value
+                    break
+
+            if not children:
+                for attribute in ("expression", "operand", "left", "right"):
+                    value = getattr(node, attribute, None)
+                    if value is not None and not isinstance(
+                        value, (str, int, float, bool)
+                    ):
+                        children.append(value)
+
+            return kind, children
+
+        def build_tree(node):
+            label, children = describe(node)
+            return {
+                "label": label,
+                "children": [build_tree(child) for child in children],
+            }
+
+        root_node = build_tree(tree)
+
+        # Calculate positions: leaves first, parents centered above children.
+        leaf_counter = [0]
+        horizontal_gap = 165
+        vertical_gap = 105
+        nodes = []
+
+        def position_nodes(node, depth=0):
+            children = node["children"]
+
+            if not children:
+                x = 100 + leaf_counter[0] * horizontal_gap
+                leaf_counter[0] += 1
+            else:
+                child_positions = [
+                    position_nodes(child, depth + 1)
+                    for child in children
+                ]
+                x = sum(child_positions) / len(child_positions)
+
+            node["x"] = x
+            node["y"] = 55 + depth * vertical_gap
+            nodes.append(node)
+            return x
+
+        position_nodes(root_node)
+
+        # Draw the branches before the nodes.
+        for node in nodes:
+            for child in node["children"]:
+                canvas.create_line(
+                    node["x"],
+                    node["y"] + 22,
+                    child["x"],
+                    child["y"] - 22,
+                    fill="#8193A5",
+                    width=2,
+                )
+
+        # Draw each node and its label.
+        for node in nodes:
+            x = node["x"]
+            y = node["y"]
+
+            text_id = canvas.create_text(
+                x,
+                y,
+                text=node["label"],
+                font=("Segoe UI", 10, "bold"),
+                fill="#17324D",
+                justify="center",
+                width=135,
+            )
+
+            bounds = canvas.bbox(text_id)
+            padding_x = 12
+            padding_y = 9
+
+            rectangle_id = canvas.create_rectangle(
+                bounds[0] - padding_x,
+                bounds[1] - padding_y,
+                bounds[2] + padding_x,
+                bounds[3] + padding_y,
+                fill="#E8F2FF",
+                outline="#3973AC",
+                width=2,
+            )
+
+            canvas.tag_lower(rectangle_id, text_id)
+
+        bounds = canvas.bbox("all")
+
+        if bounds:
+            margin = 45
+            canvas.configure(
+                scrollregion=(
+                    min(0, bounds[0] - margin),
+                    min(0, bounds[1] - margin),
+                    bounds[2] + margin,
+                    bounds[3] + margin,
+                )
+            )
 
     def _load_sample(self):
         self.editor.delete("1.0", "end")
@@ -168,13 +360,13 @@ class CompilerGUI:
 
         for widget in (
             self.tokens_output,
-            self.ast_output,
             self.semantic_output,
             self.errors_output,
             self.program_output,
         ):
             self._set_text(widget, "")
 
+        self._draw_ast(None)
         self.status.set("Cleared")
 
     @staticmethod
@@ -200,29 +392,6 @@ class CompilerGUI:
                     return "\n".join(map(str, method()))
 
         return "Could not identify the lexer API."
-
-    @staticmethod
-    def _format_ast(tree):
-        """Format the AST using the project's AST printer."""
-        try:
-            printer_module = importlib.import_module("src.ast_printer")
-
-            for function_name in (
-                "format_ast",
-                "ast_to_string",
-                "print_ast",
-            ):
-                function = getattr(printer_module, function_name, None)
-
-                if callable(function):
-                    result = function(tree)
-                    if result is not None:
-                        return str(result)
-
-        except ImportError:
-            pass
-
-        return repr(tree)
 
     @staticmethod
     def _execute_ast(tree):
@@ -262,9 +431,7 @@ class CompilerGUI:
                 operator = node.operator
 
                 if operator in ("/", "%") and right == 0:
-                    raise ValueError(
-                        "Division or modulo by zero."
-                    )
+                    raise ValueError("Division or modulo by zero.")
 
                 operations = {
                     "+": lambda: left + right,
@@ -281,7 +448,6 @@ class CompilerGUI:
 
                 return operations[operator]()
 
-            # Support unary operations if the AST defines them.
             if kind == "UnaryOp":
                 operator = node.operator
                 operand = evaluate(node.operand)
@@ -295,9 +461,7 @@ class CompilerGUI:
                     f"Unsupported unary operator: {operator}"
                 )
 
-            raise ValueError(
-                f"Unsupported AST node: {kind}"
-            )
+            raise ValueError(f"Unsupported AST node: {kind}")
 
         evaluate(tree)
         return "\n".join(printed_values)
@@ -305,15 +469,16 @@ class CompilerGUI:
     def compile_source(self):
         source = self.editor.get("1.0", "end-1c").strip()
 
-        # Clear old results to prevent stale output.
+        # Clear results from the previous compilation.
         for widget in (
             self.tokens_output,
-            self.ast_output,
             self.semantic_output,
             self.errors_output,
             self.program_output,
         ):
             self._set_text(widget, "")
+
+        self._draw_ast(None)
 
         if not source:
             self.status.set("Please enter a program.")
@@ -333,13 +498,13 @@ class CompilerGUI:
 
         try:
             tree = parse_source(source)
-            ast_text = self._format_ast(tree)
+            self._draw_ast(tree)
         except Exception as exc:
             errors.append(f"Parser error: {exc}")
 
             self._set_text(self.tokens_output, token_text)
-            self._set_text(
-                self.ast_output,
+            self._draw_ast(
+                None,
                 "AST unavailable: parsing failed.",
             )
             self._set_text(
@@ -371,7 +536,6 @@ class CompilerGUI:
             errors.append(semantic_text)
 
         self._set_text(self.tokens_output, token_text)
-        self._set_text(self.ast_output, ast_text)
         self._set_text(self.semantic_output, semantic_text)
 
         if errors:
@@ -381,7 +545,7 @@ class CompilerGUI:
             self.tabs.select(3)
             return
 
-        # Execute only when parsing and semantic analysis succeed.
+        # Run the program only if parsing and semantic analysis succeed.
         try:
             result = self._execute_ast(tree)
 
