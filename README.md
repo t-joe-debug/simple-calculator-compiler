@@ -256,7 +256,7 @@ Error: `Undefined variable: z`
 | `main` | Grammar docs + Lexer | Active |
 | `feature/grammar` | Member 1 docs | Merged into main |
 | `feature/lexer` | `lexer.py`, `test_lexer.py` | Open PR |
-| `feature/parser` | `parser.py`, `ast_nodes.py`, tests | Open PR |
+| `feature/parser` | `parser.py`, `ast_nodes.py`, tests | Merged into main |
 | `feature/ast_construction` | `ast_nodes.py`, `ast_printer.py`, tests | Open PR |
 | `feature/semantic` | All modules + GUI + all tests | Open PR |
 
