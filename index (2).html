@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Calculator Compiler</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--text:#1d2433;--muted:#667085;--line:#e1e5ee;--accent:#3b5bdb;--err:#c92a2a;--ok:#2b8a3e;--code:#f0f2f8}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b1f2a;--text:#e8eaf2;--muted:#9aa3b5;--line:#2c3242;--accent:#7c9cff;--err:#ff8787;--ok:#69db7c;--code:#232838}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial,sans-serif;line-height:1.5}
+.wrap{max-width:960px;margin:0 auto;padding:24px 16px 48px}
+h1{margin:0 0 2px;font-size:1.6rem}
+.sub{color:var(--muted);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.card h2{margin:0 0 10px;font-size:1rem;color:var(--accent)}
+textarea{width:100%;min-height:190px;resize:vertical;font:1rem/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--code);color:var(--text)}
+button{font:inherit;cursor:pointer}
+.run{padding:10px 20px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:600}
+.ghost{padding:5px 11px;border-radius:8px;border:1px solid var(--line);background:var(--code);color:var(--text);font-size:.88rem}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.bar .lbl{color:var(--muted);font-size:.88rem}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:14px}
+.tab{padding:8px 14px;border:0;background:none;color:var(--muted);border-bottom:2px solid transparent;font-weight:600}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.badge{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:999px;background:var(--err);color:#fff;font-size:.75rem}
+.panel{display:none;overflow-x:auto}
+.panel.on{display:block}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:.93rem}
+th{color:var(--muted);font-weight:600}
+.m{font-family:ui-monospace,Consolas,monospace}
+pre{margin:0;padding:12px;background:var(--code);border-radius:8px;font:.95rem ui-monospace,Consolas,monospace;overflow-x:auto;white-space:pre}
+.err{color:var(--err);margin:0 0 6px;font-family:ui-monospace,Consolas,monospace}
+.ok{color:var(--ok);font-weight:600}
+.muted{color:var(--muted)}
+h3{margin:14px 0 6px;font-size:.95rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Simple Calculator Compiler</h1>
+  <p class="sub">Compiler front end: lexical analysis, parsing (AST), semantic analysis with a symbol table, and execution of print() statements.</p>
+
+  <div class="card">
+    <h2>Source Code Editor</h2>
+    <textarea id="src" spellcheck="false"></textarea>
+    <div class="bar">
+      <button class="run" id="run">Run Compiler</button>
+      <span class="lbl">Samples:</span>
+      <button class="ghost" data-s="area">valid</button>
+      <button class="ghost" data-s="mod">modulo</button>
+      <button class="ghost" data-s="prec">precedence</button>
+      <button class="ghost" data-s="semi">missing ;</button>
+      <button class="ghost" data-s="undef">undefined variable</button>
+      <button class="ghost" data-s="zero">divide by zero</button>
+      <button class="ghost" data-s="chr">invalid character</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs" id="tabs">
+      <button class="tab" data-t="tokens">Tokens</button>
+      <button class="tab" data-t="ast">AST</button>
+      <button class="tab" data-t="sem">Semantic</button>
+      <button class="tab" data-t="errors">Errors<span class="badge" id="eb" style="display:none"></span></button>
+      <button class="tab on" data-t="out">Output</button>
+    </div>
+    <div class="panel" id="p-tokens"></div>
+    <div class="panel" id="p-ast"></div>
+    <div class="panel" id="p-sem"></div>
+    <div class="panel" id="p-errors"></div>
+    <div class="panel on" id="p-out"></div>
+  </div>
+</div>
+
+<script>
+const SAMPLES={
+ area:"# Calculate area\nw = 5;\nh = 10;\narea = w * h;\nprint(area);",
+ mod:"x = 10;\ny = x % 3;\nprint(y);",
+ prec:"result = 2 + 3 * 4;\nprint(result);",
+ semi:"x = 10\nprint(x);",
+ undef:"print(z);",
+ zero:"x = 10 / 0;\nprint(x);",
+ chr:"x = 5 $ 2;\nprint(x);"
+};
+const DESC={id:'Variable name',num:'Integer literal',print:'Keyword','=':'Assignment','+':'Operator','-':'Operator','*':'Operator','/':'Operator','%':'Operator','(':'Left parenthesis',')':'Right parenthesis',';':'Statement terminator'};
+
+function CErr(kind,msg){this.kind=kind;this.msg=msg}
+
+/* ---------- Lexer ---------- */
+function tokenize(src){
+  const t=[];let i=0,line=1;
+  while(i<src.length){
+    const c=src[i];
+    if(c==='\n'){line++;i++;continue}
+    if(/\s/.test(c)){i++;continue}
+    if(c==='#'){while(i<src.length&&src[i]!=='\n')i++;continue}
+    if(/[0-9]/.test(c)){let j=i;while(j<src.length&&/[0-9]/.test(src[j]))j++;t.push({type:'num',lexeme:src.slice(i,j),line});i=j;continue}
+    if(/[A-Za-z_]/.test(c)){let j=i;while(j<src.length&&/[A-Za-z0-9_]/.test(src[j]))j++;const w=src.slice(i,j);t.push({type:w==='print'?'print':'id',lexeme:w,line});i=j;continue}
+    if('=+-*/%();'.includes(c)){t.push({type:c,lexeme:c,line});i++;continue}
+    throw new CErr('Lexical error',"Syntax error at line "+line+": invalid character '"+c+"'");
+  }
+  t.push({type:'$',lexeme:'$',line});
+  return t;
+}
+
+/* ---------- Parser (recursive descent, LL(1) grammar) ---------- */
+function parse(toks){
+  let p=0;
+  const peek=()=>toks[p];
+  const show=t=>t.type==='$'?'end of input':t.lexeme;
+  const fail=(msg,line)=>{throw new CErr('Syntax error',"Syntax error at line "+line+": "+msg)};
+  function expect(type){
+    const t=peek();
+    if(t.type!==type){
+      const line=(type===';'&&p>0)?toks[p-1].line:t.line;
+      fail("expected '"+type+"', got '"+show(t)+"'",line);
+    }
+    return toks[p++];
+  }
+  function parseProgram(){
+    const s=[];
+    while(peek().type!=='$')s.push(parseStmt());
+    return {k:'Program',stmts:s};
+  }
+  function parseStmt(){
+    const t=peek();
+    if(t.type==='id'||(t.type==='print'&&toks[p+1].type==='=')){
+      p++;expect('=');const e=parseE();expect(';');
+      return {k:'Assignment',target:t.lexeme,e,line:t.line};
+    }
+    if(t.type==='print'){
+      p++;expect('(');const e=parseE();expect(')');expect(';');
+      return {k:'Print',e,line:t.line};
+    }
+    fail("expected identifier or 'print', got '"+show(t)+"'",t.line);
+  }
+  function parseE(){
+    let l=parseT();
+    while(peek().type==='+'||peek().type==='-'){const op=toks[p++].type;l={k:'BinaryOp',op,l,r:parseT()}}
+    return l;
+  }
+  function parseT(){
+    let l=parseF();
+    while(['*','/','%'].includes(peek().type)){const op=toks[p++].type;l={k:'BinaryOp',op,l,r:parseF()}}
+    return l;
+  }
+  function parseF(){
+    const t=peek();
+    if(t.type==='('){p++;const e=parseE();expect(')');return e}
+    if(t.type==='id'){p++;return {k:'Variable',name:t.lexeme}}
+    if(t.type==='num'){p++;return {k:'Number',v:parseInt(t.lexeme,10)}}
+    fail("expected expression, got '"+show(t)+"'",t.line);
+  }
+  return parseProgram();
+}
+
+/* ---------- AST printer ---------- */
+function lab(n){
+  switch(n.k){
+    case 'Program':return 'Program';
+    case 'Assignment':return 'Assignment: '+n.target;
+    case 'Print':return 'PrintStatement';
+    case 'BinaryOp':return 'BinaryOp: '+n.op;
+    case 'Number':return 'Number: '+n.v;
+    case 'Variable':return 'Variable: '+n.name;
+  }
+}
+function kids(n){
+  if(n.k==='Program')return n.stmts;
+  if(n.k==='Assignment'||n.k==='Print')return [n.e];
+  if(n.k==='BinaryOp')return [n.l,n.r];
+  return [];
+}
+function draw(n,pre,last,root){
+  let s=(root?'':pre+(last?'└─ ':'├─ '))+lab(n)+'\n';
+  const k=kids(n),np=root?'':pre+(last?'   ':'│  ');
+  k.forEach((c,i)=>{s+=draw(c,np,i===k.length-1,false)});
+  return s;
+}
+
+/* ---------- Semantic analyzer ---------- */
+function constVal(n){ // value only if the expression is made purely of numbers
+  if(n.k==='Number')return n.v;
+  if(n.k==='BinaryOp'){
+    const a=constVal(n.l),b=constVal(n.r);
+    if(a===null||b===null)return null;
+    switch(n.op){case '+':return a+b;case '-':return a-b;case '*':return a*b;
+      case '/':return b===0?null:a/b;case '%':return b===0?null:a%b}
+  }
+  return null;
+}
+function analyze(tree){
+  const errors=[],sym=new Map();
+  function check(n,at){
+    if(n.k==='Variable'&&!sym.has(n.name))errors.push('Undefined variable: '+n.name);
+    if(n.k==='BinaryOp'&&(n.op==='/'||n.op==='%')&&constVal(n.r)===0)
+      errors.push((n.op==='/'?'Division':'Modulo')+' by constant zero (statement '+at+')');
+    kids(n).forEach(c=>check(c,at));
+  }
+  tree.stmts.forEach((s,i)=>{
+    const at=i+1;
+    check(s.e,at);
+    if(s.k==='Assignment'){
+      if(s.target==='print')errors.push("Cannot assign to reserved keyword 'print'");
+      else if(!sym.has(s.target))sym.set(s.target,{at});
+    }
+  });
+  return {errors,sym};
+}
+
+/* ---------- Execution ---------- */
+function fmt(n){return Number.isInteger(n)?String(n):String(+n.toFixed(6))}
+function ev(n,env){
+  switch(n.k){
+    case 'Number':return n.v;
+    case 'Variable':return env[n.name];
+    case 'BinaryOp':{
+      const a=ev(n.l,env),b=ev(n.r,env);
+      if((n.op==='/'||n.op==='%')&&b===0)throw new CErr('Runtime error','Runtime error: '+(n.op==='/'?'Division':'Modulo')+' by zero');
+      switch(n.op){case '+':return a+b;case '-':return a-b;case '*':return a*b;case '/':return a/b;case '%':return a%b}
+    }
+  }
+}
+function execute(tree){
+  const env={},out=[];
+  tree.stmts.forEach(s=>{
+    const v=ev(s.e,env);
+    if(s.k==='Assignment')env[s.target]=v;else out.push(fmt(v));
+  });
+  return {env,out};
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function tab(name){
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+name));
+}
+const skipped='<span class="muted">Not run because an earlier phase failed.</span>';
+
+function run(){
+  const src=$('src').value;
+  const errors=[];let toks=null,tree=null,sem=null,res=null;
+  ['tokens','ast','sem','out'].forEach(k=>$('p-'+k).innerHTML=skipped);
+
+  try{
+    toks=tokenize(src);
+    $('p-tokens').innerHTML='<table><tr><th>#</th><th>Token</th><th>Lexeme</th><th>Description</th><th>Line</th></tr>'+
+      toks.filter(t=>t.type!=='$').map((t,i)=>'<tr><td>'+(i+1)+'</td><td class="m">'+esc(t.type)+'</td><td class="m">'+esc(t.lexeme)+'</td><td>'+DESC[t.type]+'</td><td>'+t.line+'</td></tr>').join('')+'</table>';
+    tree=parse(toks);
+    $('p-ast').innerHTML='<pre>'+esc(draw(tree,'',true,true))+'</pre>';
+    sem=analyze(tree);
+    let h='';
+    if(sem.errors.length)h+='<p class="err">'+sem.errors.length+' semantic error(s) found. See the Errors tab.</p>';
+    else h+='<p class="ok">Semantic check passed: no errors.</p>';
+    h+='<h3>Symbol Table</h3>';
+    if(sem.sym.size){
+      h+='<table><tr><th>Variable</th><th>Defined in statement</th></tr>'+
+        [...sem.sym].map(([k,v])=>'<tr><td class="m">'+esc(k)+'</td><td>'+v.at+'</td></tr>').join('')+'</table>';
+    }else h+='<span class="muted">No variables defined.</span>';
+    $('p-sem').innerHTML=h;
+    sem.errors.forEach(e=>errors.push({kind:'Semantic error',msg:e}));
+    if(!sem.errors.length){
+      try{
+        res=execute(tree);
+        $('p-out').innerHTML=res.out.length?'<pre>'+esc(res.out.join('\n'))+'</pre>':'<span class="muted">Program ran with no print() output.</span>';
+      }catch(e){
+        if(!(e instanceof CErr))throw e;
+        errors.push({kind:e.kind,msg:e.msg});
+      }
+    }
+  }catch(e){
+    if(!(e instanceof CErr))throw e;
+    errors.push({kind:e.kind,msg:e.msg});
+  }
+
+  $('p-errors').innerHTML=errors.length
+    ?errors.map(e=>'<p class="err"><b>'+esc(e.kind)+':</b> '+esc(e.msg)+'</p>').join('')
+    :'<p class="ok">No lexical, syntax, or semantic errors.</p>';
+  const b=$('eb');b.style.display=errors.length?'inline-block':'none';b.textContent=errors.length;
+  tab(errors.length?'errors':'out');
+}
+
+$('run').onclick=run;
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>tab(b.dataset.t));
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{$('src').value=SAMPLES[b.dataset.s];run()});
+$('src').value=SAMPLES.area;
+run();
+</script>
+</body>
+</html>
